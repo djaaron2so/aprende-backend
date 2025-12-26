@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>PayPal Test - Aprende</title>
+    <script src="$ printf "example_username:example_password" | base64
+ZXhhbXBsZV91c2VybmFtZTpleGFtcGxlX3Bhc3N3b3Jk"></script>
+</head>
+<body>
+    <h3>Aprende - PayPal Test</h3>
+    <div id="paypal-button-container"></div>
+
+    <script>
+      paypal.Buttons({
+        createOrder: async () => {
+          const res = await fetch("http://127.0.0.1:8091/api/billing/paypal/create-order", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer demo-user-1"
+            },
+            body: "{}"
+          });
+          const data = await res.json();
+          if (!res.ok) throw new Error(JSON.stringify(data));
+          return data.id;
+        },
+        onApprove: async (data) => {
+          const res = await fetch("http://127.0.0.1:8091/api/billing/paypal/capture-order", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer demo-user-1"
+            },
+            body: JSON.stringify({ orderID: data.orderID })
+          });
+          const capture = await res.json();
+          alert("CAPTURE RESULT: " + JSON.stringify(capture, null, 2));
+        }
+      }).render("#paypal-button-container");
+    </script>
+</body>
+</html>
