@@ -203,13 +203,13 @@ app.use((err, req, res, next) => {
     });
 });
 
-// ================================
+/// ================================
 // LISTEN
 // ================================
 const PORT = Number(process.env.PORT || 8091);
 
-const server = app.listen(PORT, "127.0.0.1", () => {
-    console.log(`✅ Aprende backend on http://127.0.0.1:${PORT}`);
+const server = app.listen(PORT, "0.0.0.0", () => {
+    console.log(`✅ Aprende backend listening on 0.0.0.0:${PORT}`);
 });
 
 server.on("error", (e) => {
