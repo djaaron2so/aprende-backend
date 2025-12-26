@@ -40,7 +40,7 @@ const app = express();
 // ================================
 app.use(
     helmet({
-        crossOriginEmbedderPolicy: false, // importante para media/audio en algunos contexts
+        crossOriginEmbedderPolicy: false,
         contentSecurityPolicy: {
             directives: {
                 defaultSrc: ["'self'"],
@@ -50,7 +50,7 @@ app.use(
                 imgSrc: ["'self'", "data:"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
                 scriptSrc: ["'self'"],
-                mediaSrc: ["'self'"], // WAV/MP3 desde tu backend
+                mediaSrc: ["'self'"],
                 connectSrc: [
                     "'self'",
                     process.env.FRONTEND_ORIGIN,
@@ -64,7 +64,7 @@ app.use(
 );
 
 // ================================
-// CORS estricto (producción)
+// CORS (producción)
 // ================================
 const allowedOrigins = new Set(
     [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
@@ -76,11 +76,10 @@ app.use(
             // Permite requests sin Origin (curl/PowerShell/apps móviles)
             if (!origin) return cb(null, true);
 
-            // Si no configuraste ORIGINS aún, en DEV permite todo (para no bloquearte)
+            // Si aún no configuraste ORIGINS, no bloquees (para no quedarte fuera)
             if (allowedOrigins.size === 0) return cb(null, true);
 
             if (allowedOrigins.has(origin)) return cb(null, true);
-
             return cb(new Error("CORS blocked"));
         },
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -105,9 +104,7 @@ app.use((err, req, res, next) => {
 // Morgan seguro (no imprime Bearer)
 // ================================
 morgan.token("auth", (req) => (req.headers.authorization ? "present" : "none"));
-app.use(
-    morgan(":method :url :status :res[content-length] - :response-time ms auth=:auth")
-);
+app.use(morgan(":method :url :status :res[content-length] - :response-time ms auth=:auth"));
 
 // ================================
 // Body parsers
@@ -122,6 +119,19 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, "..", "public")));
 
 // ================================
+// Root (evita 404 en / y /favicon.ico)
+// ================================
+app.get("/", (req, res) => {
+    return res.status(200).json({
+        ok: true,
+        service: "aprende-backend",
+        hint: "Use /health or /api",
+    });
+});
+
+app.get("/favicon.ico", (req, res) => res.status(204).end());
+
+// ================================
 // Healthcheck ROOT (producción)
 // ================================
 app.get("/health", (req, res) => {
@@ -134,7 +144,7 @@ app.get("/health", (req, res) => {
             time: new Date().toISOString(),
             tz: "America/Los_Angeles",
         });
-    } catch (e) {
+    } catch {
         return res.status(500).json({
             ok: false,
             error: "DB unhealthy",
@@ -150,7 +160,9 @@ app.get("/api", (req, res) => {
     res.json({
         ok: true,
         routes: [
+            "GET  /",
             "GET  /health",
+            "GET  /api",
             "GET  /api/health",
             "GET  /api/me",
             "POST /api/generate-beat",
@@ -203,8 +215,8 @@ app.use((err, req, res, next) => {
     });
 });
 
-/// ================================
-// LISTEN
+// ================================
+// LISTEN (Render OK)
 // ================================
 const PORT = Number(process.env.PORT || 8091);
 
