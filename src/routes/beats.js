@@ -10,6 +10,10 @@ import { db } from "../db.js";
 import { laDayISO, laMonthISO, LA_TZ } from "../lib/time.js";
 import { createRateLimiter } from "../middleware/rateLimit.js";
 import { logHistory } from "../lib/history.js";
+import os from "os";
+import crypto from "crypto";
+import { r2PutFile, r2Exists, r2DownloadToFile, r2SignedGetUrl } from "../lib/r2.js";
+
 
 const router = Router();
 
@@ -34,6 +38,17 @@ const rlWav = createRateLimiter({
     limit: 60, // 60/min por user
     keyFn: (req) => `user:${req.user?.id || "anon"}`,
 });
+const r2KeyWav = (id) => `beats/${id}.wav`;
+const r2KeyMp3 = (id) => `beats/${id}.mp3`;
+
+function tmpFile(ext) {
+    const name = `aprende-${crypto.randomUUID()}.${ext}`;
+    return path.join(os.tmpdir(), name);
+}
+
+function safeLogHistory(userId, type, status, meta) {
+    try { logHistory(userId, type, status, meta ?? null); } catch { }
+}
 
 function isProPlan(planId) {
     return typeof planId === "string" && planId.toLowerCase().startsWith("pro");
@@ -262,6 +277,22 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
                 fs.copyFileSync(srcWav, expectedWav);
             }
         }
+        // ✅ Subir WAV a R2 (persistente)
+        try {
+            await r2PutFile({
+                key: r2KeyWav(id),
+                filePath: expectedWav,
+                contentType: "audio/wav",
+            });
+        } catch (e) {
+            console.error("R2 WAV UPLOAD FAILED", e);
+            safeLogHistory(userId, "generate_beat", "error", { id, reason: "r2_wav_upload_failed" });
+            return res.status(500).json({
+                ok: false,
+                error: "Failed to upload WAV",
+                code: "R2_WAV_UPLOAD_FAILED",
+            });
+        }
 
         if (!fs.existsSync(expectedWav)) {
             safeLogHistory(userId, "generate_beat", "error", {
@@ -353,7 +384,7 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
             ok: true,
             tz: LA_TZ,
             id,
-            fileUrl: `/beats/${id}.wav`,
+            fileUrl: `/api/beats/${id}.wav`,
             usage: {
                 day,
                 month,
@@ -458,6 +489,78 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
 
         const rawPlanId = await getUserPlan(userId);
         const planId = normalizePlanId(rawPlanId);
+        const mp3Key = r2KeyMp3(id);
+        const wavKey = r2KeyWav(id);
+
+        // ✅ Si MP3 ya existe en R2 -> redirige
+        if (await r2Exists(mp3Key)) {
+            // log exports
+            try {
+                db.prepare(
+                    `INSERT INTO exports (user_id, beat_id, format, file_path, size_bytes, ip, user_agent)
+       VALUES (?, ?, 'mp3', ?, 0, ?, ?)
+       ON CONFLICT(user_id, beat_id, format) DO UPDATE SET
+         file_path=excluded.file_path,
+         ip=excluded.ip,
+         user_agent=excluded.user_agent,
+         created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+                ).run(userId, id, `r2:${mp3Key}`, req.ip || null, req.headers["user-agent"] || null);
+            } catch { }
+
+            safeLogHistory(userId, "download_mp3", "ok", { beatId: id });
+
+            const url = await r2SignedGetUrl(mp3Key);
+            return res.redirect(302, url);
+        }
+
+        // ✅ Si no existe MP3, aseguramos que exista WAV en R2
+        if (!(await r2Exists(wavKey))) {
+            safeLogHistory(userId, "download_mp3", "error", { beatId: id, reason: "file_not_found" });
+            return res.status(404).json({ ok: false, error: "WAV not found for MP3", code: "WAV_NOT_FOUND" });
+        }
+
+        // ✅ Descargar WAV temporal, convertir a MP3, subir MP3 a R2
+        const tmpWav = tmpFile("wav");
+        const tmpMp3 = tmpFile("mp3");
+
+        try {
+            await r2DownloadToFile({ key: wavKey, outPath: tmpWav });
+            await wavToMp3(tmpWav, tmpMp3);
+
+            if (!fs.existsSync(tmpMp3)) {
+                safeLogHistory(userId, "download_mp3", "error", { beatId: id, reason: "mp3_gen_failed" });
+                return res.status(500).json({ ok: false, error: "MP3 generation failed", code: "MP3_GEN_FAILED" });
+            }
+
+            await r2PutFile({
+                key: mp3Key,
+                filePath: tmpMp3,
+                contentType: "audio/mpeg",
+            });
+
+        } finally {
+            // limpiar temp
+            try { fs.unlinkSync(tmpWav); } catch { }
+            try { fs.unlinkSync(tmpMp3); } catch { }
+        }
+
+        // log exports + history
+        try {
+            db.prepare(
+                `INSERT INTO exports (user_id, beat_id, format, file_path, size_bytes, ip, user_agent)
+     VALUES (?, ?, 'mp3', ?, 0, ?, ?)
+     ON CONFLICT(user_id, beat_id, format) DO UPDATE SET
+       file_path=excluded.file_path,
+       ip=excluded.ip,
+       user_agent=excluded.user_agent,
+       created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+            ).run(userId, id, `r2:${mp3Key}`, req.ip || null, req.headers["user-agent"] || null);
+        } catch { }
+
+        safeLogHistory(userId, "download_mp3", "ok", { beatId: id });
+
+        const url = await r2SignedGetUrl(mp3Key);
+        return res.redirect(302, url);
 
         // ✅ check PRO sobre el plan normalizado
         if (!isProPlan(planId)) {

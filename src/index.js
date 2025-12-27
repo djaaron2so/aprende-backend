@@ -135,7 +135,7 @@ app.use(express.urlencoded({ extended: true }));
 // Static files
 // ================================
 // Sirve /beats/<id>.wav y /beats/<id>.mp3 desde public
-app.use(express.static(path.join(__dirname, "..", "public")));
+app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
 // ================================
 // Root (evita 404 en / y /favicon.ico)
