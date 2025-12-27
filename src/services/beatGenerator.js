@@ -172,12 +172,32 @@ export async function generateBeatWav({
     density = 2,
     humanize = 0,
 } = {}) {
-    // samples en: C:\Aprende\worker\samples
-    const sampleDir = path.join(process.cwd(), "..", "worker", "samples");
+    // ================================
+    // Samples (LOCAL + RENDER SAFE)
+    // ================================
+    // Prioridad:
+    // 1) ENV SAMPLES_DIR
+    // 2) <project_root>/worker/samples  (Render y local)
+    // ================================
+    const sampleDir =
+        process.env.SAMPLES_DIR ||
+        path.resolve(process.cwd(), "worker", "samples");
 
     const kickPath = path.join(sampleDir, "dum.wav");
     const snarePath = path.join(sampleDir, "snare.wav");
     const hatPath = path.join(sampleDir, "hat.wav");
+
+    function mustExist(p) {
+        if (!fs.existsSync(p)) {
+            throw new Error(`Missing sample: ${p}`);
+        }
+        return p;
+    }
+
+    mustExist(kickPath);
+    mustExist(snarePath);
+    mustExist(hatPath);
+
 
     if (!fs.existsSync(kickPath)) throw new Error(`Missing sample: ${kickPath}`);
     if (!fs.existsSync(snarePath)) throw new Error(`Missing sample: ${snarePath}`);
