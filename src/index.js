@@ -23,8 +23,8 @@ import receiptsRouter from "./routes/receipts.js";
 
 import paypalRouter from "./routes/paypalRoutes.js";
 import paypalWebhookRouter from "./routes/paypalWebhook.js";
-import { historyRouter } from "./routes/history.js";
 
+import { historyRouter } from "./routes/history.js";
 
 // ================================
 // __dirname (ESM)
@@ -36,6 +36,15 @@ const __dirname = path.dirname(__filename);
 // App
 // ================================
 const app = express();
+
+// ================================
+// Version / deploy id (para saber qué commit corre Render)
+// ================================
+const APP_VERSION =
+    process.env.RENDER_GIT_COMMIT ||
+    process.env.GIT_COMMIT ||
+    process.env.VERCEL_GIT_COMMIT_SHA ||
+    "unknown";
 
 // ================================
 // Helmet (producción, sin romper audio/PayPal)
@@ -96,7 +105,6 @@ app.use(
     })
 );
 
-
 // Si CORS bloquea, devuelve JSON limpio
 app.use((err, req, res, next) => {
     if (err && String(err.message || "").includes("CORS")) {
@@ -113,7 +121,9 @@ app.use((err, req, res, next) => {
 // Morgan seguro (no imprime Bearer)
 // ================================
 morgan.token("auth", (req) => (req.headers.authorization ? "present" : "none"));
-app.use(morgan(":method :url :status :res[content-length] - :response-time ms auth=:auth"));
+app.use(
+    morgan(":method :url :status :res[content-length] - :response-time ms auth=:auth")
+);
 
 // ================================
 // Body parsers
@@ -152,6 +162,7 @@ app.get("/health", (req, res) => {
             service: "aprende-backend",
             time: new Date().toISOString(),
             tz: "America/Los_Angeles",
+            version: APP_VERSION,
         });
     } catch {
         return res.status(500).json({
@@ -163,17 +174,32 @@ app.get("/health", (req, res) => {
 });
 
 // ================================
+// Version endpoint (debug deploy)
+// ================================
+app.get("/__version", (req, res) => {
+    return res.json({
+        ok: true,
+        service: "aprende-backend",
+        version: APP_VERSION,
+        time: new Date().toISOString(),
+    });
+});
+
+// ================================
 // API index (debug)
 // ================================
 app.get("/api", (req, res) => {
     res.json({
         ok: true,
+        version: APP_VERSION,
         routes: [
             "GET  /",
             "GET  /health",
+            "GET  /__version",
             "GET  /api",
             "GET  /api/health",
             "GET  /api/me",
+            "GET  /api/history?limit=&type=",
             "POST /api/generate-beat",
             "GET  /api/beats/:id.mp3",
             "GET  /api/usage",
@@ -196,6 +222,8 @@ app.use("/api", meRouter);
 app.use("/api", beatsRouter);
 app.use("/api", usageRouter);
 app.use("/api", exportsRouter);
+
+// ✅ History en su path real (separado)
 app.use("/api/history", historyRouter);
 
 // Payments en su path real
