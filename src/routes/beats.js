@@ -9,6 +9,7 @@ import { requireAuth } from "../middleware/requireAuth.js";
 import { db } from "../db.js";
 import { laDayISO, laMonthISO, LA_TZ } from "../lib/time.js";
 import { createRateLimiter } from "../middleware/rateLimit.js";
+import { logHistory } from "../lib/history.js";
 
 const router = Router();
 
@@ -16,14 +17,21 @@ const router = Router();
 const rlGenerateBeat = createRateLimiter({
     name: "generate-beat",
     windowMs: 60_000, // 1 min
-    limit: 10,        // 10/min por user
+    limit: 10, // 10/min por user
     keyFn: (req) => `user:${req.user?.id || "anon"}`,
 });
 
 const rlMp3 = createRateLimiter({
     name: "mp3",
     windowMs: 60_000, // 1 min
-    limit: 30,        // 30/min por user
+    limit: 30, // 30/min por user
+    keyFn: (req) => `user:${req.user?.id || "anon"}`,
+});
+
+const rlWav = createRateLimiter({
+    name: "wav",
+    windowMs: 60_000, // 1 min
+    limit: 60, // 60/min por user
     keyFn: (req) => `user:${req.user?.id || "anon"}`,
 });
 
@@ -86,6 +94,27 @@ function remaining(limit, used) {
     return Math.max(0, limit - used);
 }
 
+function safeLogHistory(userId, type, status, meta) {
+    try {
+        logHistory(userId, type, status, meta ?? null);
+    } catch (e) {
+        console.error("HISTORY LOG FAILED", e);
+    }
+}
+
+function tableExists(name) {
+    try {
+        const row = db
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1"
+            )
+            .get(name);
+        return !!row;
+    } catch {
+        return false;
+    }
+}
+
 const beatsDir = path.join(process.cwd(), "public", "beats");
 const wavPathFor = (id) => path.join(beatsDir, `${id}.wav`);
 const mp3PathFor = (id) => path.join(beatsDir, `${id}.mp3`);
@@ -122,6 +151,15 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
 
         // Límite diario
         if (Number.isFinite(maxDaily) && maxDaily >= 0 && dailyUsed >= maxDaily) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "LIMIT_DAILY",
+                day,
+                month,
+                plan: planId,
+                max_beats_daily: maxDaily,
+                beats_generated_today: dailyUsed,
+            });
+
             return res.status(402).json({
                 ok: false,
                 error: "Daily beat limit reached",
@@ -140,11 +178,16 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
         }
 
         // Límite mensual
-        if (
-            Number.isFinite(maxMonthly) &&
-            maxMonthly >= 0 &&
-            monthlyUsed >= maxMonthly
-        ) {
+        if (Number.isFinite(maxMonthly) && maxMonthly >= 0 && monthlyUsed >= maxMonthly) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "LIMIT_MONTHLY",
+                day,
+                month,
+                plan: planId,
+                max_beats_monthly: maxMonthly,
+                beats_generated_this_month: monthlyUsed,
+            });
+
             return res.status(402).json({
                 ok: false,
                 error: "Monthly beat limit reached",
@@ -189,6 +232,14 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
             (result?.filename ? String(result.filename).replace(/\.wav$/i, "") : null);
 
         if (!id) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "GENERATOR_NO_ID",
+                bpm,
+                bars,
+                swing,
+                style,
+            });
+
             return res.status(500).json({
                 ok: false,
                 error: "Beat generator did not return id",
@@ -213,6 +264,13 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
         }
 
         if (!fs.existsSync(expectedWav)) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "WAV_MISSING",
+                id,
+                expectedWav,
+                srcWav,
+            });
+
             return res.status(500).json({
                 ok: false,
                 error: "WAV not found after generation",
@@ -238,12 +296,58 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
             console.error("USAGE LOG FAILED", e);
         }
 
+        // (Opcional) guardar en tabla beats si existe
+        if (tableExists("beats")) {
+            try {
+                db.prepare(
+                    `INSERT INTO beats (id, user_id, bpm, bars, swing, style, energy, density, humanize, wav_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             user_id=excluded.user_id,
+             bpm=excluded.bpm,
+             bars=excluded.bars,
+             swing=excluded.swing,
+             style=excluded.style,
+             energy=excluded.energy,
+             density=excluded.density,
+             humanize=excluded.humanize,
+             wav_path=excluded.wav_path,
+             created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+                ).run(
+                    id,
+                    userId,
+                    bpm,
+                    bars,
+                    swing,
+                    style,
+                    energy,
+                    density,
+                    humanize,
+                    expectedWav
+                );
+            } catch (e) {
+                console.error("BEATS INSERT FAILED", e);
+            }
+        }
+
         // after increment
         const usedTodayAfter = dailyUsed + 1;
         const usedMonthAfter = monthlyUsed + 1;
 
         const remainingTodayAfter = remaining(maxDaily, usedTodayAfter);
         const remainingMonthAfter = remaining(maxMonthly, usedMonthAfter);
+
+        safeLogHistory(userId, "generate_beat", "ok", {
+            id,
+            bpm,
+            bars,
+            swing,
+            style,
+            energy,
+            density,
+            humanize,
+            fileUrl: `/beats/${id}.wav`,
+        });
 
         return res.json({
             ok: true,
@@ -267,8 +371,79 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
 });
 
 // ------------------------------
+// GET /api/beats/:id.wav  (registrar descarga WAV + history)
+// ------------------------------
+router.get("/beats/:id.wav", requireAuth, rlWav, async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({
+                ok: false,
+                error: "Unauthorized",
+                code: "UNAUTHORIZED",
+            });
+        }
+
+        const id = String(req.params.id || "").trim();
+        if (!id) {
+            return res.status(400).json({
+                ok: false,
+                error: "Missing id",
+                code: "MISSING_ID",
+            });
+        }
+
+        fs.mkdirSync(beatsDir, { recursive: true });
+
+        const wavPath = wavPathFor(id);
+        if (!fs.existsSync(wavPath)) {
+            safeLogHistory(userId, "download_wav", "error", { id, code: "WAV_NOT_FOUND" });
+
+            return res.status(404).json({
+                ok: false,
+                error: "WAV not found",
+                code: "WAV_NOT_FOUND",
+            });
+        }
+
+        // Registrar export WAV (sin límites por plan por ahora)
+        try {
+            const stat = fs.statSync(wavPath);
+
+            db.prepare(
+                `INSERT INTO exports (user_id, beat_id, format, file_path, size_bytes, ip, user_agent)
+         VALUES (?, ?, 'wav', ?, ?, ?, ?)
+         ON CONFLICT(user_id, beat_id, format) DO UPDATE SET
+           file_path=excluded.file_path,
+           size_bytes=excluded.size_bytes,
+           ip=excluded.ip,
+           user_agent=excluded.user_agent,
+           created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+            ).run(
+                userId,
+                id,
+                wavPath,
+                stat.size,
+                req.ip || null,
+                req.headers["user-agent"] || null
+            );
+        } catch (e) {
+            console.error("EXPORT WAV LOG FAILED", e);
+        }
+
+        safeLogHistory(userId, "download_wav", "ok", { id });
+
+        // Forzar download (en vez de inline)
+        res.setHeader("Content-Disposition", `attachment; filename="${id}.wav"`);
+        return res.sendFile(wavPath);
+    } catch (err) {
+        return next(err);
+    }
+});
+
+// ------------------------------
 // GET /api/beats/:id.mp3 (solo PRO)
-// + registra export + respeta max_exports MENSUAL
+// + registra export + respeta max_exports MENSUAL + history
 // ------------------------------
 router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
     try {
@@ -282,15 +457,22 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
         }
 
         const rawPlanId = await getUserPlan(userId);
-        if (!isProPlan(rawPlanId)) {
+        const planId = normalizePlanId(rawPlanId);
+
+        // ✅ check PRO sobre el plan normalizado
+        if (!isProPlan(planId)) {
+            safeLogHistory(userId, "download_mp3", "error", {
+                id: String(req.params.id || "").trim(),
+                code: "UPGRADE_REQUIRED",
+                plan: planId,
+            });
+
             return res.status(402).json({
                 ok: false,
                 error: "Upgrade required for MP3",
                 code: "UPGRADE_REQUIRED",
             });
         }
-
-        const planId = normalizePlanId(rawPlanId);
 
         const id = String(req.params.id || "").trim();
         if (!id) {
@@ -309,6 +491,11 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
         if (!fs.existsSync(mp3Path)) {
             const wavPath = wavPathFor(id);
             if (!fs.existsSync(wavPath)) {
+                safeLogHistory(userId, "download_mp3", "error", {
+                    id,
+                    code: "MP3_NOT_FOUND_NO_WAV",
+                });
+
                 return res.status(404).json({
                     ok: false,
                     error: "MP3 not found",
@@ -319,6 +506,11 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
             await wavToMp3(wavPath, mp3Path);
 
             if (!fs.existsSync(mp3Path)) {
+                safeLogHistory(userId, "download_mp3", "error", {
+                    id,
+                    code: "MP3_GEN_FAILED",
+                });
+
                 return res.status(500).json({
                     ok: false,
                     error: "MP3 generation failed",
@@ -357,6 +549,14 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
                 .get(userId, `${monthPrefix}%`)?.n ?? 0;
 
         if (used >= maxExports) {
+            safeLogHistory(userId, "download_mp3", "error", {
+                id,
+                code: "EXPORT_LIMIT",
+                month: monthPrefix,
+                used: Number(used),
+                max: Number(maxExports),
+            });
+
             return res.status(402).json({
                 ok: false,
                 error: "Export limit reached",
@@ -391,8 +591,13 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
                 req.headers["user-agent"] || null
             );
         } catch (e) {
-            console.error("EXPORT LOG FAILED", e);
+            console.error("EXPORT MP3 LOG FAILED", e);
         }
+
+        safeLogHistory(userId, "download_mp3", "ok", { id });
+
+        // Forzar download (opcional). Si prefieres inline, quita esta línea:
+        res.setHeader("Content-Disposition", `attachment; filename="${id}.mp3"`);
 
         return res.sendFile(mp3Path);
     } catch (err) {
