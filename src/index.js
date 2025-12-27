@@ -23,6 +23,8 @@ import receiptsRouter from "./routes/receipts.js";
 
 import paypalRouter from "./routes/paypalRoutes.js";
 import paypalWebhookRouter from "./routes/paypalWebhook.js";
+import { historyRouter } from "./routes/history.js";
+
 
 // ================================
 // __dirname (ESM)
@@ -67,7 +69,14 @@ app.use(
 // CORS (producción)
 // ================================
 const allowedOrigins = new Set(
-    [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
+    [
+        process.env.FRONTEND_ORIGIN,
+        process.env.FRONTEND_ORIGIN_DEV,
+        "http://localhost:5174",
+        "http://127.0.0.1:5174",
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ].filter(Boolean)
 );
 
 app.use(
@@ -76,17 +85,17 @@ app.use(
             // Permite requests sin Origin (curl/PowerShell/apps móviles)
             if (!origin) return cb(null, true);
 
-            // Si aún no configuraste ORIGINS, no bloquees (para no quedarte fuera)
-            if (allowedOrigins.size === 0) return cb(null, true);
-
+            // Si el origin está permitido, OK
             if (allowedOrigins.has(origin)) return cb(null, true);
+
             return cb(new Error("CORS blocked"));
         },
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
-        credentials: false,
+        credentials: true,
     })
 );
+
 
 // Si CORS bloquea, devuelve JSON limpio
 app.use((err, req, res, next) => {
@@ -187,6 +196,7 @@ app.use("/api", meRouter);
 app.use("/api", beatsRouter);
 app.use("/api", usageRouter);
 app.use("/api", exportsRouter);
+app.use("/api/history", historyRouter);
 
 // Payments en su path real
 app.use("/api/payments", paymentsRouter);
