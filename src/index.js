@@ -75,17 +75,16 @@ app.use(
 );
 
 // ================================
-// CORS (producción)
+// CORS (producción + dev localhost any port)
 // ================================
+// ✅ Regex DEV: localhost/127.0.0.1 con cualquier puerto
+const isDevLocalOrigin = (origin) =>
+    typeof origin === "string" &&
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+// ✅ Allowed origins producción (y opcionales)
 const allowedOrigins = new Set(
-    [
-        process.env.FRONTEND_ORIGIN,
-        process.env.FRONTEND_ORIGIN_DEV,
-        "http://localhost:5174",
-        "http://127.0.0.1:5174",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ].filter(Boolean)
+    [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
 );
 
 app.use(
@@ -94,7 +93,10 @@ app.use(
             // Permite requests sin Origin (curl/PowerShell/apps móviles)
             if (!origin) return cb(null, true);
 
-            // Si el origin está permitido, OK
+            // ✅ DEV: permite cualquier puerto en localhost
+            if (isDevLocalOrigin(origin)) return cb(null, true);
+
+            // ✅ PROD: solo los definidos
             if (allowedOrigins.has(origin)) return cb(null, true);
 
             return cb(new Error("CORS blocked"));
@@ -102,8 +104,12 @@ app.use(
         methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
         credentials: true,
+        optionsSuccessStatus: 204,
     })
 );
+
+// ✅ Preflight global (importante para fetch con Authorization)
+app.options("*", cors());
 
 // Si CORS bloquea, devuelve JSON limpio
 app.use((err, req, res, next) => {
@@ -134,7 +140,7 @@ app.use(express.urlencoded({ extended: true }));
 // ================================
 // Static files
 // ================================
-// Sirve /beats/<id>.wav y /beats/<id>.mp3 desde public
+// Sirve archivos estáticos si los necesitas (tu API real va por /api)
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
 // ================================
@@ -201,6 +207,7 @@ app.get("/api", (req, res) => {
             "GET  /api/me",
             "GET  /api/history?limit=&type=",
             "POST /api/generate-beat",
+            "GET  /api/beats/:id.wav",
             "GET  /api/beats/:id.mp3",
             "GET  /api/usage",
             "GET  /api/exports",
@@ -223,10 +230,10 @@ app.use("/api", beatsRouter);
 app.use("/api", usageRouter);
 app.use("/api", exportsRouter);
 
-// ✅ History en su path real (separado)
+// ✅ History
 app.use("/api/history", historyRouter);
 
-// Payments en su path real
+// Payments
 app.use("/api/payments", paymentsRouter);
 app.use("/api", receiptsRouter);
 
