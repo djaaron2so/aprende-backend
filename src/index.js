@@ -13,17 +13,13 @@ import { db } from "./db.js";
 // ================================
 import healthRouter from "./routes/health.js";
 import meRouter from "./routes/me.js";
-
 import beatsRouter from "./routes/beats.js";
 import usageRouter from "./routes/usage.js";
 import exportsRouter from "./routes/exports.js";
-
 import paymentsRouter from "./routes/paymentsRoutes.js";
 import receiptsRouter from "./routes/receipts.js";
-
 import paypalRouter from "./routes/paypalRoutes.js";
 import paypalWebhookRouter from "./routes/paypalWebhook.js";
-
 import { historyRouter } from "./routes/history.js";
 
 // ================================
@@ -38,7 +34,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 
 // ================================
-// Version / deploy id (para saber qué commit corre Render)
+// Version / deploy id
 // ================================
 const APP_VERSION =
     process.env.RENDER_GIT_COMMIT ||
@@ -47,7 +43,7 @@ const APP_VERSION =
     "unknown";
 
 // ================================
-// Helmet (producción, sin romper audio/PayPal)
+// Helmet (no rompe audio / PayPal)
 // ================================
 app.use(
     helmet({
@@ -75,28 +71,30 @@ app.use(
 );
 
 // ================================
-// CORS (producción + dev localhost any port)
+// CORS (PROD + localhost cualquier puerto)
 // ================================
+
+// DEV: localhost / 127.0.0.1 con cualquier puerto
 const isDevLocalOrigin = (origin) =>
     typeof origin === "string" &&
     /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 
+// PROD allowlist
 const allowedOrigins = new Set(
     [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
 );
 
 const corsOptions = {
     origin: (origin, cb) => {
-        // Permite requests sin Origin (curl/PowerShell/apps móviles)
+        // Sin Origin → curl, PowerShell, apps móviles
         if (!origin) return cb(null, true);
 
-        // ✅ DEV local (cualquier puerto)
+        // DEV local
         if (isDevLocalOrigin(origin)) return cb(null, true);
 
-        // ✅ PROD allowlist
+        // PROD
         if (allowedOrigins.has(origin)) return cb(null, true);
 
-        // Bloquear
         return cb(new Error(`CORS blocked: ${origin}`));
     },
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -106,50 +104,31 @@ const corsOptions = {
     maxAge: 86400,
 };
 
+// ✅ aplicar UNA sola vez
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
-
-app.use(
-    cors({
-        origin: (origin, cb) => {
-            // Permite requests sin Origin (curl/PowerShell/apps móviles)
-            if (!origin) return cb(null, true);
-
-            // ✅ DEV: permite cualquier puerto en localhost
-            if (isDevLocalOrigin(origin)) return cb(null, true);
-
-            // ✅ PROD: solo los definidos
-            if (allowedOrigins.has(origin)) return cb(null, true);
-
-            return cb(new Error("CORS blocked"));
-        },
-        methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowedHeaders: ["Content-Type", "Authorization"],
-        credentials: true,
-        optionsSuccessStatus: 204,
-    })
-);
-
-// ✅ Preflight global (importante para fetch con Authorization)
-app.options("*", cors());
-
-// Si CORS bloquea, devuelve JSON limpio
+// ================================
+// CORS error handler (JSON limpio)
+// ================================
 app.use((err, req, res, next) => {
     if (err && String(err.message || "").includes("CORS")) {
         return res.status(403).json({
             ok: false,
             error: "CORS blocked",
+            details: err.message,
             code: "CORS_BLOCKED",
         });
     }
-    return next(err);
+    next(err);
 });
 
 // ================================
-// Morgan seguro (no imprime Bearer)
+// Morgan (seguro)
 // ================================
-morgan.token("auth", (req) => (req.headers.authorization ? "present" : "none"));
+morgan.token("auth", (req) =>
+    req.headers.authorization ? "present" : "none"
+);
 app.use(
     morgan(":method :url :status :res[content-length] - :response-time ms auth=:auth")
 );
@@ -161,32 +140,30 @@ app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 
 // ================================
-// Static files
+// Static (opcional)
 // ================================
-// Sirve archivos estáticos si los necesitas (tu API real va por /api)
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
 // ================================
-// Root (evita 404 en / y /favicon.ico)
+// Root
 // ================================
 app.get("/", (req, res) => {
-    return res.status(200).json({
+    res.json({
         ok: true,
         service: "aprende-backend",
         hint: "Use /health or /api",
     });
 });
 
-app.get("/favicon.ico", (req, res) => res.status(204).end());
+app.get("/favicon.ico", (_, res) => res.status(204).end());
 
 // ================================
-// Healthcheck ROOT (producción)
+// Health
 // ================================
 app.get("/health", (req, res) => {
     try {
         db.prepare("SELECT 1").get();
-
-        return res.json({
+        res.json({
             ok: true,
             service: "aprende-backend",
             time: new Date().toISOString(),
@@ -194,7 +171,7 @@ app.get("/health", (req, res) => {
             version: APP_VERSION,
         });
     } catch {
-        return res.status(500).json({
+        res.status(500).json({
             ok: false,
             error: "DB unhealthy",
             code: "HEALTH_DB_FAIL",
@@ -203,10 +180,10 @@ app.get("/health", (req, res) => {
 });
 
 // ================================
-// Version endpoint (debug deploy)
+// Version
 // ================================
 app.get("/__version", (req, res) => {
-    return res.json({
+    res.json({
         ok: true,
         service: "aprende-backend",
         version: APP_VERSION,
@@ -215,27 +192,24 @@ app.get("/__version", (req, res) => {
 });
 
 // ================================
-// API index (debug)
+// API index
 // ================================
 app.get("/api", (req, res) => {
     res.json({
         ok: true,
         version: APP_VERSION,
         routes: [
-            "GET  /",
             "GET  /health",
             "GET  /__version",
             "GET  /api",
             "GET  /api/health",
             "GET  /api/me",
-            "GET  /api/history?limit=&type=",
+            "GET  /api/history",
             "POST /api/generate-beat",
             "GET  /api/beats/:id.wav",
             "GET  /api/beats/:id.mp3",
             "GET  /api/usage",
             "GET  /api/exports",
-            "GET  /api/payments?limit=&offset=",
-            "GET  /api/payments/:captureId/receipt.pdf",
             "POST /api/paypal/create-order",
             "POST /api/paypal/capture-order",
             "POST /api/paypal/webhook",
@@ -246,21 +220,14 @@ app.get("/api", (req, res) => {
 // ================================
 // API routes
 // ================================
-app.use("/api", healthRouter); // /api/health
+app.use("/api", healthRouter);
 app.use("/api", meRouter);
-
 app.use("/api", beatsRouter);
 app.use("/api", usageRouter);
 app.use("/api", exportsRouter);
-
-// ✅ History
 app.use("/api/history", historyRouter);
-
-// Payments
 app.use("/api/payments", paymentsRouter);
 app.use("/api", receiptsRouter);
-
-// PayPal
 app.use("/api/paypal", paypalRouter);
 app.use("/api/paypal", paypalWebhookRouter);
 
@@ -284,7 +251,7 @@ app.use((err, req, res, next) => {
 });
 
 // ================================
-// LISTEN (Render OK)
+// LISTEN (Render)
 // ================================
 const PORT = Number(process.env.PORT || 8091);
 
