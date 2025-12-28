@@ -1,26 +1,9 @@
-﻿# ===== Node =====
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-.DS_Store
-
-# ===== Env =====
+﻿node_modules/
 .env
 .env.*
-!.env.example
-
-# ===== SQLite =====
 *.sqlite
 *.sqlite-shm
 *.sqlite-wal
-
-# ===== Public generated audio =====
 public/beats/*.wav
 public/beats/*.mp3
-
-# ===== OS / Editor =====
 .vscode/
-.idea/
-*.swp
