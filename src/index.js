@@ -83,7 +83,6 @@ const isDevLocalOrigin = (origin) =>
 const allowedOrigins = new Set(
     [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
 );
-
 const corsOptions = {
     origin: (origin, cb) => {
         // Sin Origin → curl, PowerShell, apps móviles
@@ -120,9 +119,8 @@ app.use((err, req, res, next) => {
             code: "CORS_BLOCKED",
         });
     }
-    next(err);
+    return next(err);
 });
-
 // ================================
 // Morgan (seguro)
 // ================================
