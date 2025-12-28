@@ -29,11 +29,11 @@ export function r2Client() {
     if (_client) return _client;
 
     const accountId = must(R2_ACCOUNT_ID, "R2_ACCOUNT_ID");
+
     _client = new S3Client({
         region: R2_REGION, // "auto" recomendado por R2
         endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
-        // ✅ CRÍTICO para R2: usa path-style
-        forcePathStyle: true,
+        forcePathStyle: true, // ✅ importante para R2
         credentials: {
             accessKeyId: must(R2_ACCESS_KEY_ID, "R2_ACCESS_KEY_ID"),
             secretAccessKey: must(R2_SECRET_ACCESS_KEY, "R2_SECRET_ACCESS_KEY"),
@@ -63,9 +63,9 @@ export async function r2PutFile({ key, filePath, contentType }) {
                 CacheControl: "public, max-age=31536000, immutable",
             })
         );
+
         return { ok: true, key };
     } catch (e) {
-        // ✅ Esto te da la causa real en Render Logs
         console.error("R2 PutObject failed", {
             key,
             name: e?.name,
@@ -86,7 +86,6 @@ export async function r2Exists(key) {
         await client.send(new HeadObjectCommand({ Bucket, Key: key }));
         return true;
     } catch (e) {
-        // Mejor: solo "false" si es NotFound; si es AccessDenied, conviene saberlo
         const status = e?.$metadata?.httpStatusCode;
         if (status === 404) return false;
 
