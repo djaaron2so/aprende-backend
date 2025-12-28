@@ -1,4 +1,4 @@
-import fs from "fs";
+﻿import fs from "fs";
 import { pipeline } from "stream/promises";
 import {
     S3Client,
@@ -22,16 +22,25 @@ function must(v, name) {
     return v;
 }
 
+// ✅ Reusa el cliente (singleton)
+let _client = null;
+
 export function r2Client() {
+    if (_client) return _client;
+
     const accountId = must(R2_ACCOUNT_ID, "R2_ACCOUNT_ID");
-    return new S3Client({
-        region: R2_REGION,
+    _client = new S3Client({
+        region: R2_REGION, // "auto" recomendado por R2
         endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
+        // ✅ CRÍTICO para R2: usa path-style
+        forcePathStyle: true,
         credentials: {
             accessKeyId: must(R2_ACCESS_KEY_ID, "R2_ACCESS_KEY_ID"),
             secretAccessKey: must(R2_SECRET_ACCESS_KEY, "R2_SECRET_ACCESS_KEY"),
         },
     });
+
+    return _client;
 }
 
 export function r2Bucket() {
@@ -44,17 +53,29 @@ export async function r2PutFile({ key, filePath, contentType }) {
 
     const Body = fs.createReadStream(filePath);
 
-    await client.send(
-        new PutObjectCommand({
-            Bucket,
-            Key: key,
-            Body,
-            ContentType: contentType || "application/octet-stream",
-            CacheControl: "public, max-age=31536000, immutable",
-        })
-    );
-
-    return { ok: true, key };
+    try {
+        await client.send(
+            new PutObjectCommand({
+                Bucket,
+                Key: key,
+                Body,
+                ContentType: contentType || "application/octet-stream",
+                CacheControl: "public, max-age=31536000, immutable",
+            })
+        );
+        return { ok: true, key };
+    } catch (e) {
+        // ✅ Esto te da la causa real en Render Logs
+        console.error("R2 PutObject failed", {
+            key,
+            name: e?.name,
+            message: e?.message,
+            code: e?.Code || e?.code,
+            httpStatusCode: e?.$metadata?.httpStatusCode,
+            requestId: e?.$metadata?.requestId,
+        });
+        throw e;
+    }
 }
 
 export async function r2Exists(key) {
@@ -64,8 +85,20 @@ export async function r2Exists(key) {
     try {
         await client.send(new HeadObjectCommand({ Bucket, Key: key }));
         return true;
-    } catch {
-        return false;
+    } catch (e) {
+        // Mejor: solo "false" si es NotFound; si es AccessDenied, conviene saberlo
+        const status = e?.$metadata?.httpStatusCode;
+        if (status === 404) return false;
+
+        console.error("R2 HeadObject failed", {
+            key,
+            name: e?.name,
+            message: e?.message,
+            code: e?.Code || e?.code,
+            httpStatusCode: status,
+            requestId: e?.$metadata?.requestId,
+        });
+        throw e;
     }
 }
 
