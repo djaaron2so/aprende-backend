@@ -7,3 +7,8 @@
 public/beats/*.wav
 public/beats/*.mp3
 .vscode/
+data.sqlite-wal
+data.sqlite-shm
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite-journal
