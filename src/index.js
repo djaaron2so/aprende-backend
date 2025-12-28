@@ -77,15 +77,38 @@ app.use(
 // ================================
 // CORS (producción + dev localhost any port)
 // ================================
-// ✅ Regex DEV: localhost/127.0.0.1 con cualquier puerto
 const isDevLocalOrigin = (origin) =>
     typeof origin === "string" &&
     /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
 
-// ✅ Allowed origins producción (y opcionales)
 const allowedOrigins = new Set(
     [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
 );
+
+const corsOptions = {
+    origin: (origin, cb) => {
+        // Permite requests sin Origin (curl/PowerShell/apps móviles)
+        if (!origin) return cb(null, true);
+
+        // ✅ DEV local (cualquier puerto)
+        if (isDevLocalOrigin(origin)) return cb(null, true);
+
+        // ✅ PROD allowlist
+        if (allowedOrigins.has(origin)) return cb(null, true);
+
+        // Bloquear
+        return cb(new Error(`CORS blocked: ${origin}`));
+    },
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: true,
+    optionsSuccessStatus: 204,
+    maxAge: 86400,
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
+
 
 app.use(
     cors({
