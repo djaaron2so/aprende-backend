@@ -1,6 +1,11 @@
 import fs from "fs";
 import { pipeline } from "stream/promises";
-import { S3Client, PutObjectCommand, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import {
+    S3Client,
+    PutObjectCommand,
+    HeadObjectCommand,
+    GetObjectCommand,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const {
@@ -45,7 +50,6 @@ export async function r2PutFile({ key, filePath, contentType }) {
             Key: key,
             Body,
             ContentType: contentType || "application/octet-stream",
-            // Puedes habilitar cache si quieres:
             CacheControl: "public, max-age=31536000, immutable",
         })
     );
@@ -60,8 +64,7 @@ export async function r2Exists(key) {
     try {
         await client.send(new HeadObjectCommand({ Bucket, Key: key }));
         return true;
-    } catch (e) {
-        // 404 => no existe
+    } catch {
         return false;
     }
 }
@@ -77,11 +80,13 @@ export async function r2DownloadToFile({ key, outPath }) {
     return { ok: true, outPath };
 }
 
-export async function r2SignedGetUrl(key, ttlSeconds = Number(R2_SIGNED_URL_TTL_SECONDS || 600)) {
+export async function r2SignedGetUrl(
+    key,
+    ttlSeconds = Number(R2_SIGNED_URL_TTL_SECONDS || 600)
+) {
     const client = r2Client();
     const Bucket = r2Bucket();
 
     const cmd = new GetObjectCommand({ Bucket, Key: key });
-    const url = await getSignedUrl(client, cmd, { expiresIn: ttlSeconds });
-    return url;
+    return await getSignedUrl(client, cmd, { expiresIn: ttlSeconds });
 }
