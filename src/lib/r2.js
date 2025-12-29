@@ -31,7 +31,7 @@ export function r2Client() {
     const accountId = must(R2_ACCOUNT_ID, "R2_ACCOUNT_ID");
 
     _client = new S3Client({
-        region: R2_REGION, // "auto" recomendado por R2
+        region: R2_REGION,
         endpoint: `https://${accountId}.r2.cloudflarestorage.com`,
         forcePathStyle: true, // ✅ importante para R2
         credentials: {
@@ -39,6 +39,7 @@ export function r2Client() {
             secretAccessKey: must(R2_SECRET_ACCESS_KEY, "R2_SECRET_ACCESS_KEY"),
         },
     });
+
 
     return _client;
 }
@@ -89,14 +90,15 @@ export async function r2Exists(key) {
         const status = e?.$metadata?.httpStatusCode;
         if (status === 404) return false;
 
-        console.error("R2 HeadObject failed", {
+        console.error("R2 PutObject failed", {
             key,
             name: e?.name,
             message: e?.message,
             code: e?.Code || e?.code,
-            httpStatusCode: status,
+            httpStatusCode: e?.$metadata?.httpStatusCode,
             requestId: e?.$metadata?.requestId,
         });
+
         throw e;
     }
 }
