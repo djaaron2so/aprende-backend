@@ -314,8 +314,16 @@ router.post(
                     ok: false,
                     error: "Failed to upload WAV",
                     code: "R2_WAV_UPLOAD_FAILED",
-                    details, // ✅ temporal para debug (ver en PowerShell)
+                    debug_marker: "BEATS_JS_V1",
+                    details: {
+                        name: e?.name,
+                        message: e?.message,
+                        code: e?.Code || e?.code,
+                        httpStatusCode: e?.$metadata?.httpStatusCode,
+                        requestId: e?.$metadata?.requestId,
+                    },
                 });
+
             }
 
             // Usage increment
