@@ -43,7 +43,21 @@ const APP_VERSION =
     "unknown";
 
 // ================================
-// Helmet (no rompe audio / PayPal)
+// Helpers: origins
+// ================================
+
+// DEV: localhost / 127.0.0.1 con cualquier puerto
+const isDevLocalOrigin = (origin) =>
+    typeof origin === "string" &&
+    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+
+// PROD allowlist (exactos)
+const allowedOrigins = new Set(
+    [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
+);
+
+// ================================
+// Helmet (no rompe audio / PayPal / fetch desde frontend)
 // ================================
 app.use(
     helmet({
@@ -57,13 +71,26 @@ app.use(
                 imgSrc: ["'self'", "data:"],
                 styleSrc: ["'self'", "'unsafe-inline'"],
                 scriptSrc: ["'self'"],
-                mediaSrc: ["'self'"],
+
+                // ✅ audio: tu API y R2 (signed url)
+                mediaSrc: [
+                    "'self'",
+                    "https:",
+                ],
+
+                // ✅ fetch/websocket/etc desde frontend (dev + prod)
                 connectSrc: [
                     "'self'",
-                    process.env.FRONTEND_ORIGIN,
-                    process.env.FRONTEND_ORIGIN_DEV,
+                    "https:",
+                    // PayPal
                     "https://api.paypal.com",
                     "https://api-m.paypal.com",
+                    // Orígenes permitidos (prod)
+                    process.env.FRONTEND_ORIGIN,
+                    process.env.FRONTEND_ORIGIN_DEV,
+                    // DEV local (para que no falle en localhost)
+                    "http://localhost:*",
+                    "http://127.0.0.1:*",
                 ].filter(Boolean),
             },
         },
@@ -73,16 +100,6 @@ app.use(
 // ================================
 // CORS (PROD + localhost cualquier puerto)
 // ================================
-
-// DEV: localhost / 127.0.0.1 con cualquier puerto
-const isDevLocalOrigin = (origin) =>
-    typeof origin === "string" &&
-    /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
-
-// PROD allowlist
-const allowedOrigins = new Set(
-    [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
-);
 const corsOptions = {
     origin: (origin, cb) => {
         // Sin Origin → curl, PowerShell, apps móviles
@@ -91,19 +108,18 @@ const corsOptions = {
         // DEV local
         if (isDevLocalOrigin(origin)) return cb(null, true);
 
-        // PROD
+        // PROD allowlist
         if (allowedOrigins.has(origin)) return cb(null, true);
 
         return cb(new Error(`CORS blocked: ${origin}`));
     },
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
     optionsSuccessStatus: 204,
     maxAge: 86400,
 };
 
-// ✅ aplicar UNA sola vez
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
 
@@ -121,12 +137,11 @@ app.use((err, req, res, next) => {
     }
     return next(err);
 });
+
 // ================================
 // Morgan (seguro)
 // ================================
-morgan.token("auth", (req) =>
-    req.headers.authorization ? "present" : "none"
-);
+morgan.token("auth", (req) => (req.headers.authorization ? "present" : "none"));
 app.use(
     morgan(":method :url :status :res[content-length] - :response-time ms auth=:auth")
 );
