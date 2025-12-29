@@ -292,39 +292,28 @@ router.post(
                     key: r2KeyWav(id),
                     filePath: expectedWav,
                     contentType: "audio/wav",
-                });
-            } catch (e) {
-                const details = {
-                    name: e?.name,
-                    message: e?.message,
-                    code: e?.Code || e?.code,
-                    httpStatusCode: e?.$metadata?.httpStatusCode,
-                    requestId: e?.$metadata?.requestId,
-                };
-
-                console.error("R2 WAV UPLOAD FAILED", { beatId: id, ...details });
-
-                safeLogHistory(userId, "generate_beat", "error", {
-                    beatId: id,
-                    reason: "r2_wav_upload_failed",
-                    ...details,
-                });
-
-                return res.status(500).json({
-                    ok: false,
-                    error: "Failed to upload WAV",
-                    code: "R2_WAV_UPLOAD_FAILED",
-                    debug_marker: "BEATS_JS_V1",
-                    details: {
+                } catch (e) {
+                    console.error("R2 WAV UPLOAD FAILED", {
+                        beatId: id,
+                        key: r2KeyWav(id),
                         name: e?.name,
                         message: e?.message,
                         code: e?.Code || e?.code,
                         httpStatusCode: e?.$metadata?.httpStatusCode,
                         requestId: e?.$metadata?.requestId,
-                    },
-                });
+                    });
 
-            }
+                    safeLogHistory(userId, "generate_beat", "error", {
+                        beatId: id,
+                        reason: "r2_wav_upload_failed",
+                    });
+
+                    return res.status(500).json({
+                        ok: false,
+                        error: "Failed to upload WAV",
+                        code: "R2_WAV_UPLOAD_FAILED",
+                    });
+                }
 
             // Usage increment
             try {
