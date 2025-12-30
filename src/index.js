@@ -56,6 +56,11 @@ const allowedOrigins = new Set(
     [process.env.FRONTEND_ORIGIN, process.env.FRONTEND_ORIGIN_DEV].filter(Boolean)
 );
 
+// (Opcional) permitir previews de Vercel del mismo proyecto
+const isVercelAprendeWeb = (origin) =>
+    typeof origin === "string" &&
+    /^https:\/\/aprende-web(-[a-z0-9-]+)?\.vercel\.app$/.test(origin);
+
 // ================================
 // Helmet (no rompe audio / PayPal / fetch desde frontend)
 // ================================
@@ -72,23 +77,17 @@ app.use(
                 styleSrc: ["'self'", "'unsafe-inline'"],
                 scriptSrc: ["'self'"],
 
-                // ✅ audio: tu API y R2 (signed url)
-                mediaSrc: [
-                    "'self'",
-                    "https:",
-                ],
+                // audio (tu API + signed urls https)
+                mediaSrc: ["'self'", "https:"],
 
-                // ✅ fetch/websocket/etc desde frontend (dev + prod)
+                // fetch / ws
                 connectSrc: [
                     "'self'",
                     "https:",
-                    // PayPal
                     "https://api.paypal.com",
                     "https://api-m.paypal.com",
-                    // Orígenes permitidos (prod)
                     process.env.FRONTEND_ORIGIN,
                     process.env.FRONTEND_ORIGIN_DEV,
-                    // DEV local (para que no falle en localhost)
                     "http://localhost:*",
                     "http://127.0.0.1:*",
                 ].filter(Boolean),
@@ -108,10 +107,14 @@ const corsOptions = {
         // DEV local
         if (isDevLocalOrigin(origin)) return cb(null, true);
 
-        // PROD allowlist
+        // Vercel (previews + prod del proyecto)
+        if (isVercelAprendeWeb(origin)) return cb(null, true);
+
+        // PROD allowlist exacta (por env)
         if (allowedOrigins.has(origin)) return cb(null, true);
 
-        return cb(new Error(`CORS blocked: ${origin}`));
+        // ✅ no lances Error (rompe preflight). Solo bloquea.
+        return cb(null, false);
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allowedHeaders: ["Content-Type", "Authorization"],
@@ -122,21 +125,6 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options("*", cors(corsOptions));
-
-// ================================
-// CORS error handler (JSON limpio)
-// ================================
-app.use((err, req, res, next) => {
-    if (err && String(err.message || "").includes("CORS")) {
-        return res.status(403).json({
-            ok: false,
-            error: "CORS blocked",
-            details: err.message,
-            code: "CORS_BLOCKED",
-        });
-    }
-    return next(err);
-});
 
 // ================================
 // Morgan (seguro)
@@ -169,6 +157,20 @@ app.get("/", (req, res) => {
 });
 
 app.get("/favicon.ico", (_, res) => res.status(204).end());
+
+// ================================
+// Debug CORS env (temporal)
+// ================================
+app.get("/__cors_debug", (req, res) => {
+    res.json({
+        ok: true,
+        origin_received: req.headers.origin || null,
+        FRONTEND_ORIGIN: process.env.FRONTEND_ORIGIN || null,
+        FRONTEND_ORIGIN_DEV: process.env.FRONTEND_ORIGIN_DEV || null,
+        NODE_ENV: process.env.NODE_ENV || null,
+        version: APP_VERSION,
+    });
+});
 
 // ================================
 // Health
@@ -214,6 +216,7 @@ app.get("/api", (req, res) => {
         routes: [
             "GET  /health",
             "GET  /__version",
+            "GET  /__cors_debug",
             "GET  /api",
             "GET  /api/health",
             "GET  /api/me",
