@@ -128,272 +128,261 @@ function tableExists(name) {
 // ===============================
 // POST /api/generate-beat
 // ===============================
-router.post(
-    "/generate-beat",
-    requireAuth,
-    rlGenerateBeat,
-    async (req, res, next) => {
-        try {
-            const userId = req.user?.id;
-            if (!userId) {
-                return res
-                    .status(401)
-                    .json({ ok: false, error: "Unauthorized", code: "UNAUTHORIZED" });
-            }
+router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res
+                .status(401)
+                .json({ ok: false, error: "Unauthorized", code: "UNAUTHORIZED" });
+        }
 
-            const rawPlanId = await getUserPlan(userId);
-            const planId = normalizePlanId(rawPlanId);
+        const rawPlanId = await getUserPlan(userId);
+        const planId = normalizePlanId(rawPlanId);
 
-            const day = laDayISO();
-            const month = laMonthISO();
+        const day = laDayISO();
+        const month = laMonthISO();
 
-            const limits = getPlanBeatLimits(planId);
-            const maxDaily = safeLimitNumber(limits?.max_beats_daily);
-            const maxMonthly = safeLimitNumber(limits?.max_beats_monthly);
+        const limits = getPlanBeatLimits(planId);
+        const maxDaily = safeLimitNumber(limits?.max_beats_daily);
+        const maxMonthly = safeLimitNumber(limits?.max_beats_monthly);
 
-            const { dailyUsed, monthlyUsed } = getUsageCounts(userId, day, month);
+        const { dailyUsed, monthlyUsed } = getUsageCounts(userId, day, month);
 
-            // Limite diario
-            if (Number.isFinite(maxDaily) && maxDaily >= 0 && dailyUsed >= maxDaily) {
-                safeLogHistory(userId, "generate_beat", "error", {
-                    code: "LIMIT_DAILY",
+        // Límite diario
+        if (Number.isFinite(maxDaily) && maxDaily >= 0 && dailyUsed >= maxDaily) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "LIMIT_DAILY",
+                day,
+                month,
+                plan: planId,
+                max_beats_daily: maxDaily,
+                beats_generated_today: dailyUsed,
+            });
+
+            return res.status(402).json({
+                ok: false,
+                error: "Daily beat limit reached",
+                code: "LIMIT_DAILY",
+                meta: {
+                    tz: LA_TZ,
                     day,
                     month,
                     plan: planId,
                     max_beats_daily: maxDaily,
                     beats_generated_today: dailyUsed,
-                });
+                    remaining_beats_today: 0,
+                    remaining_beats_this_month: remaining(maxMonthly, monthlyUsed),
+                },
+            });
+        }
 
-                return res.status(402).json({
-                    ok: false,
-                    error: "Daily beat limit reached",
-                    code: "LIMIT_DAILY",
-                    meta: {
-                        tz: LA_TZ,
-                        day,
-                        month,
-                        plan: planId,
-                        max_beats_daily: maxDaily,
-                        beats_generated_today: dailyUsed,
-                        remaining_beats_today: 0,
-                        remaining_beats_this_month: remaining(maxMonthly, monthlyUsed),
-                    },
-                });
-            }
+        // Límite mensual
+        if (Number.isFinite(maxMonthly) && maxMonthly >= 0 && monthlyUsed >= maxMonthly) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "LIMIT_MONTHLY",
+                day,
+                month,
+                plan: planId,
+                max_beats_monthly: maxMonthly,
+                beats_generated_this_month: monthlyUsed,
+            });
 
-            // Limite mensual
-            if (
-                Number.isFinite(maxMonthly) &&
-                maxMonthly >= 0 &&
-                monthlyUsed >= maxMonthly
-            ) {
-                safeLogHistory(userId, "generate_beat", "error", {
-                    code: "LIMIT_MONTHLY",
+            return res.status(402).json({
+                ok: false,
+                error: "Monthly beat limit reached",
+                code: "LIMIT_MONTHLY",
+                meta: {
+                    tz: LA_TZ,
                     day,
                     month,
                     plan: planId,
                     max_beats_monthly: maxMonthly,
                     beats_generated_this_month: monthlyUsed,
-                });
+                    remaining_beats_today: remaining(maxDaily, dailyUsed),
+                    remaining_beats_this_month: 0,
+                },
+            });
+        }
 
-                return res.status(402).json({
-                    ok: false,
-                    error: "Monthly beat limit reached",
-                    code: "LIMIT_MONTHLY",
-                    meta: {
-                        tz: LA_TZ,
-                        day,
-                        month,
-                        plan: planId,
-                        max_beats_monthly: maxMonthly,
-                        beats_generated_this_month: monthlyUsed,
-                        remaining_beats_today: remaining(maxDaily, dailyUsed),
-                        remaining_beats_this_month: 0,
-                    },
-                });
-            }
+        // Input (público)
+        const bpm = clampNumber(req.body?.bpm ?? 95, 40, 220, 95);
+        const bars = clampNumber(req.body?.bars ?? 16, 1, 128, 16);
+        const swing = clampNumber(req.body?.swing ?? 0, 0, 100, 0);
+        const style = String(req.body?.style ?? "dembow");
 
-            // Input (público)
-            const bpm = clampNumber(req.body?.bpm ?? 95, 40, 220, 95);
-            const bars = clampNumber(req.body?.bars ?? 16, 1, 128, 16);
-            const swing = clampNumber(req.body?.swing ?? 0, 0, 100, 0);
-            const style = String(req.body?.style ?? "dembow");
+        const energy = clampNumber(req.body?.energy ?? 2, 0, 10, 2);
+        const density = clampNumber(req.body?.density ?? 2, 0, 10, 2);
+        const humanize = clampNumber(req.body?.humanize ?? 0, 0, 100, 0);
 
-            const energy = clampNumber(req.body?.energy ?? 2, 0, 10, 2);
-            const density = clampNumber(req.body?.density ?? 2, 0, 10, 2);
-            const humanize = clampNumber(req.body?.humanize ?? 0, 0, 100, 0);
+        fs.mkdirSync(beatsDir, { recursive: true });
 
-            fs.mkdirSync(beatsDir, { recursive: true });
+        const result = await generateBeatWav({
+            bpm,
+            bars,
+            swing,
+            style,
+            energy,
+            density,
+            humanize,
+        });
 
-            const result = await generateBeatWav({
+        const id =
+            result?.id ||
+            (result?.filename ? String(result.filename).replace(/\.wav$/i, "") : null);
+
+        if (!id) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "GENERATOR_NO_ID",
                 bpm,
                 bars,
                 swing,
                 style,
-                energy,
-                density,
-                humanize,
             });
 
-            const id =
-                result?.id ||
-                (result?.filename ? String(result.filename).replace(/\.wav$/i, "") : null);
+            return res.status(500).json({
+                ok: false,
+                error: "Beat generator did not return id",
+                code: "GENERATOR_NO_ID",
+            });
+        }
 
-            if (!id) {
-                safeLogHistory(userId, "generate_beat", "error", {
-                    code: "GENERATOR_NO_ID",
+        const expectedWav = wavPathFor(id);
+
+        const srcWav =
+            result?.filePath ||
+            result?.path ||
+            (result?.filename ? path.resolve(String(result.filename)) : null);
+
+        if (!fs.existsSync(expectedWav) && srcWav && fs.existsSync(srcWav)) {
+            try {
+                fs.renameSync(srcWav, expectedWav);
+            } catch {
+                fs.copyFileSync(srcWav, expectedWav);
+            }
+        }
+
+        if (!fs.existsSync(expectedWav)) {
+            safeLogHistory(userId, "generate_beat", "error", {
+                code: "WAV_MISSING",
+                id,
+                expectedWav,
+                srcWav,
+            });
+
+            return res.status(500).json({
+                ok: false,
+                error: "WAV not found after generation",
+                code: "WAV_MISSING",
+                meta: { expectedWav, srcWav, resultKeys: Object.keys(result || {}) },
+            });
+        }
+
+        // Subir WAV a R2 (si está configurado). Si falla, seguimos con fallback local.
+        let wavStorage = "local";
+        try {
+            await r2PutFile({
+                key: r2KeyWav(id),
+                filePath: expectedWav,
+                contentType: "audio/wav",
+            });
+            wavStorage = "r2";
+        } catch (e) {
+            console.warn("R2 WAV UPLOAD FAILED (fallback local)", {
+                beatId: id,
+                key: r2KeyWav(id),
+                name: e?.name,
+                message: e?.message,
+                code: e?.Code || e?.code,
+                httpStatusCode: e?.$metadata?.httpStatusCode,
+                requestId: e?.$metadata?.requestId,
+            });
+
+            safeLogHistory(userId, "generate_beat", "warn", {
+                beatId: id,
+                reason: "r2_wav_upload_failed_fallback_local",
+            });
+        }
+
+        // Usage increment
+        try {
+            db.prepare(
+                `INSERT INTO usage (userId, day, month, dailyUsed, monthlyUsed)
+         VALUES (?, ?, ?, 1, 1)
+         ON CONFLICT(userId, day, month) DO UPDATE SET
+           dailyUsed = dailyUsed + 1,
+           monthlyUsed = monthlyUsed + 1`
+            ).run(userId, day, month);
+        } catch (e) {
+            console.error("USAGE LOG FAILED", e);
+        }
+
+        // Opcional: tabla beats
+        if (tableExists("beats")) {
+            try {
+                db.prepare(
+                    `INSERT INTO beats (id, user_id, bpm, bars, swing, style, energy, density, humanize, wav_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET
+             user_id=excluded.user_id,
+             bpm=excluded.bpm,
+             bars=excluded.bars,
+             swing=excluded.swing,
+             style=excluded.style,
+             energy=excluded.energy,
+             density=excluded.density,
+             humanize=excluded.humanize,
+             wav_path=excluded.wav_path,
+             created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+                ).run(
+                    id,
+                    userId,
                     bpm,
                     bars,
                     swing,
                     style,
-                });
-
-                return res.status(500).json({
-                    ok: false,
-                    error: "Beat generator did not return id",
-                    code: "GENERATOR_NO_ID",
-                });
-            }
-
-            const expectedWav = wavPathFor(id);
-
-            const srcWav =
-                result?.filePath ||
-                result?.path ||
-                (result?.filename ? path.resolve(String(result.filename)) : null);
-
-            if (!fs.existsSync(expectedWav) && srcWav && fs.existsSync(srcWav)) {
-                try {
-                    fs.renameSync(srcWav, expectedWav);
-                } catch {
-                    fs.copyFileSync(srcWav, expectedWav);
-                }
-            }
-
-            if (!fs.existsSync(expectedWav)) {
-                safeLogHistory(userId, "generate_beat", "error", {
-                    code: "WAV_MISSING",
-                    id,
-                    expectedWav,
-                    srcWav,
-                });
-
-                return res.status(500).json({
-                    ok: false,
-                    error: "WAV not found after generation",
-                    code: "WAV_MISSING",
-                    meta: { expectedWav, srcWav, resultKeys: Object.keys(result || {}) },
-                });
-            }
-
-            // Subir WAV a R2
-            try {
-                await r2PutFile({
-                    key: r2KeyWav(id),
-                    filePath: expectedWav,
-                    contentType: "audio/wav",
-                } catch (e) {
-                    console.error("R2 WAV UPLOAD FAILED", {
-                        beatId: id,
-                        key: r2KeyWav(id),
-                        name: e?.name,
-                        message: e?.message,
-                        code: e?.Code || e?.code,
-                        httpStatusCode: e?.$metadata?.httpStatusCode,
-                        requestId: e?.$metadata?.requestId,
-                    });
-
-                    safeLogHistory(userId, "generate_beat", "error", {
-                        beatId: id,
-                        reason: "r2_wav_upload_failed",
-                    });
-
-                    return res.status(500).json({
-                        ok: false,
-                        error: "Failed to upload WAV",
-                        code: "R2_WAV_UPLOAD_FAILED",
-                    });
-                }
-
-            // Usage increment
-            try {
-                db.prepare(
-                    `INSERT INTO usage (userId, day, month, dailyUsed, monthlyUsed)
-           VALUES (?, ?, ?, 1, 1)
-           ON CONFLICT(userId, day, month) DO UPDATE SET
-             dailyUsed = dailyUsed + 1,
-             monthlyUsed = monthlyUsed + 1`
-                ).run(userId, day, month);
+                    energy,
+                    density,
+                    humanize,
+                    wavStorage === "r2" ? `r2:${r2KeyWav(id)}` : expectedWav
+                );
             } catch (e) {
-                console.error("USAGE LOG FAILED", e);
+                console.error("BEATS INSERT FAILED", e);
             }
-
-            // Opcional: tabla beats
-            if (tableExists("beats")) {
-                try {
-                    db.prepare(
-                        `INSERT INTO beats (id, user_id, bpm, bars, swing, style, energy, density, humanize, wav_path)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(id) DO UPDATE SET
-               user_id=excluded.user_id,
-               bpm=excluded.bpm,
-               bars=excluded.bars,
-               swing=excluded.swing,
-               style=excluded.style,
-               energy=excluded.energy,
-               density=excluded.density,
-               humanize=excluded.humanize,
-               wav_path=excluded.wav_path,
-               created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
-                    ).run(
-                        id,
-                        userId,
-                        bpm,
-                        bars,
-                        swing,
-                        style,
-                        energy,
-                        density,
-                        humanize,
-                        `r2:${r2KeyWav(id)}`
-                    );
-                } catch (e) {
-                    console.error("BEATS INSERT FAILED", e);
-                }
-            }
-
-            const usedTodayAfter = dailyUsed + 1;
-            const usedMonthAfter = monthlyUsed + 1;
-
-            const remainingTodayAfter = remaining(maxDaily, usedTodayAfter);
-            const remainingMonthAfter = remaining(maxMonthly, usedMonthAfter);
-
-            safeLogHistory(userId, "generate_beat", "ok", { beatId: id, bpm, style });
-
-            return res.json({
-                ok: true,
-                tz: LA_TZ,
-                id,
-                fileUrl: `/api/beats/${id}.wav`,
-                usage: {
-                    day,
-                    month,
-                    beats_generated_today: usedTodayAfter,
-                    beats_generated_this_month: usedMonthAfter,
-                    max_beats_daily: Number.isFinite(maxDaily) ? maxDaily : null,
-                    max_beats_monthly: Number.isFinite(maxMonthly) ? maxMonthly : null,
-                    remaining_beats_today: remainingTodayAfter,
-                    remaining_beats_this_month: remainingMonthAfter,
-                },
-            });
-        } catch (err) {
-            return next(err);
         }
+
+        const usedTodayAfter = dailyUsed + 1;
+        const usedMonthAfter = monthlyUsed + 1;
+
+        const remainingTodayAfter = remaining(maxDaily, usedTodayAfter);
+        const remainingMonthAfter = remaining(maxMonthly, usedMonthAfter);
+
+        safeLogHistory(userId, "generate_beat", "ok", { beatId: id, bpm, style, storage: wavStorage });
+
+        return res.json({
+            ok: true,
+            tz: LA_TZ,
+            id,
+            storage: { wav: wavStorage },
+            fileUrl: `/api/beats/${id}.wav`,
+            usage: {
+                day,
+                month,
+                beats_generated_today: usedTodayAfter,
+                beats_generated_this_month: usedMonthAfter,
+                max_beats_daily: Number.isFinite(maxDaily) ? maxDaily : null,
+                max_beats_monthly: Number.isFinite(maxMonthly) ? maxMonthly : null,
+                remaining_beats_today: remainingTodayAfter,
+                remaining_beats_this_month: remainingMonthAfter,
+            },
+        });
+    } catch (err) {
+        return next(err);
     }
-);
+});
 
 // ===============================
-// GET /api/beats/:id.wav (R2 signed URL + history + export log)
+// GET /api/beats/:id.wav (R2 signed URL o fallback local)
 // ===============================
 router.get("/beats/:id.wav", requireAuth, rlWav, async (req, res, next) => {
     try {
@@ -413,17 +402,56 @@ router.get("/beats/:id.wav", requireAuth, rlWav, async (req, res, next) => {
 
         const key = r2KeyWav(id);
 
-        if (!(await r2Exists(key))) {
-            safeLogHistory(userId, "download_wav", "error", {
+        // 1) Si existe en R2 -> redirect signed
+        try {
+            if (await r2Exists(key)) {
+                // export log (best-effort)
+                try {
+                    db.prepare(
+                        `INSERT INTO exports (user_id, beat_id, format, file_path, size_bytes, ip, user_agent)
+             VALUES (?, ?, 'wav', ?, 0, ?, ?)
+             ON CONFLICT(user_id, beat_id, format) DO UPDATE SET
+               file_path=excluded.file_path,
+               size_bytes=excluded.size_bytes,
+               ip=excluded.ip,
+               user_agent=excluded.user_agent,
+               created_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')`
+                    ).run(
+                        userId,
+                        id,
+                        `r2:${key}`,
+                        req.ip || null,
+                        req.headers["user-agent"] || null
+                    );
+                } catch (e) {
+                    console.error("EXPORT WAV LOG FAILED", e);
+                }
+
+                safeLogHistory(userId, "download_wav", "ok", { beatId: id, source: "r2" });
+
+                const url = await r2SignedGetUrl(key);
+                return res.redirect(302, url);
+            }
+        } catch (e) {
+            // si R2 falla, seguimos a local
+            console.warn("R2 EXISTS CHECK FAILED (fallback local)", {
                 beatId: id,
-                reason: "file_not_found",
+                key,
+                name: e?.name,
+                message: e?.message,
             });
+        }
+
+        // 2) Fallback local
+        const localPath = wavPathFor(id);
+        if (!fs.existsSync(localPath)) {
+            safeLogHistory(userId, "download_wav", "error", { beatId: id, reason: "file_not_found" });
             return res
                 .status(404)
                 .json({ ok: false, error: "WAV not found", code: "WAV_NOT_FOUND" });
         }
 
-        // export log
+        // export log (best-effort)
         try {
             db.prepare(
                 `INSERT INTO exports (user_id, beat_id, format, file_path, size_bytes, ip, user_agent)
@@ -437,7 +465,7 @@ router.get("/beats/:id.wav", requireAuth, rlWav, async (req, res, next) => {
             ).run(
                 userId,
                 id,
-                `r2:${key}`,
+                `local:${localPath}`,
                 req.ip || null,
                 req.headers["user-agent"] || null
             );
@@ -445,10 +473,8 @@ router.get("/beats/:id.wav", requireAuth, rlWav, async (req, res, next) => {
             console.error("EXPORT WAV LOG FAILED", e);
         }
 
-        safeLogHistory(userId, "download_wav", "ok", { beatId: id });
-
-        const url = await r2SignedGetUrl(key);
-        return res.redirect(302, url);
+        safeLogHistory(userId, "download_wav", "ok", { beatId: id, source: "local" });
+        return res.sendFile(localPath);
     } catch (err) {
         return next(err);
     }
@@ -566,9 +592,12 @@ router.get("/beats/:id.mp3", requireAuth, rlMp3, async (req, res, next) => {
             return res.redirect(302, url);
         }
 
-        // si no hay mp3, debe existir wav
+        // si no hay mp3, debe existir wav en R2 (para generar mp3 en server)
         if (!(await r2Exists(wavKey))) {
-            safeLogHistory(userId, "download_mp3", "error", { beatId: id, reason: "wav_missing" });
+            safeLogHistory(userId, "download_mp3", "error", {
+                beatId: id,
+                reason: "wav_missing",
+            });
             return res
                 .status(404)
                 .json({ ok: false, error: "WAV not found for MP3", code: "WAV_NOT_FOUND" });
