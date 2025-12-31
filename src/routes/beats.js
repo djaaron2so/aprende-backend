@@ -279,7 +279,9 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
         }
 
         // Subir WAV a R2 (si está configurado). Si falla, seguimos con fallback local.
+        let r2Fail = null;
         let wavStorage = "local";
+
         try {
             await r2PutFile({
                 key: r2KeyWav(id),
@@ -288,21 +290,26 @@ router.post("/generate-beat", requireAuth, rlGenerateBeat, async (req, res, next
             });
             wavStorage = "r2";
         } catch (e) {
-            console.warn("R2 WAV UPLOAD FAILED (fallback local)", {
-                beatId: id,
-                key: r2KeyWav(id),
+            r2Fail = {
                 name: e?.name,
                 message: e?.message,
                 code: e?.Code || e?.code,
                 httpStatusCode: e?.$metadata?.httpStatusCode,
-                requestId: e?.$metadata?.requestId,
+            };
+
+            console.warn("R2 WAV UPLOAD FAILED (fallback local)", {
+                beatId: id,
+                key: r2KeyWav(id),
+                ...r2Fail,
             });
 
             safeLogHistory(userId, "generate_beat", "warn", {
                 beatId: id,
                 reason: "r2_wav_upload_failed_fallback_local",
+                r2: r2Fail,
             });
         }
+
 
         // Usage increment
         try {
