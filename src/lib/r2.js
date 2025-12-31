@@ -1,4 +1,5 @@
-﻿import fs from "fs";
+﻿// src/lib/r2.js
+import fs from "fs";
 import { pipeline } from "stream/promises";
 import {
     S3Client,
@@ -22,6 +23,26 @@ function must(v, name) {
     return v;
 }
 
+function clampInt(n, { min, max, fallback }) {
+    const x = Number(n);
+    if (!Number.isFinite(x)) return fallback;
+    const xi = Math.floor(x);
+    if (xi < min) return min;
+    if (xi > max) return max;
+    return xi;
+}
+
+// TTL seguro para Signed URLs:
+// - mínimo 1s
+// - máximo 7 días (604800)
+function signedUrlTTLSeconds() {
+    return clampInt(R2_SIGNED_URL_TTL_SECONDS, {
+        min: 1,
+        max: 604800,
+        fallback: 600,
+    });
+}
+
 // ✅ Reusa el cliente (singleton)
 let _client = null;
 
@@ -40,7 +61,6 @@ export function r2Client() {
         },
     });
 
-
     return _client;
 }
 
@@ -48,13 +68,39 @@ export function r2Bucket() {
     return must(R2_BUCKET, "R2_BUCKET");
 }
 
+function logAwsErr(prefix, e, extra = {}) {
+    console.error(prefix, {
+        ...extra,
+        name: e?.name,
+        message: e?.message,
+        code: e?.Code || e?.code,
+        httpStatusCode: e?.$metadata?.httpStatusCode,
+        requestId: e?.$metadata?.requestId,
+    });
+}
+
+function isNotFoundErr(e) {
+    const status = e?.$metadata?.httpStatusCode;
+    const code = e?.Code || e?.code;
+    const name = e?.name;
+
+    return (
+        status === 404 ||
+        name === "NotFound" ||
+        name === "NoSuchKey" ||
+        code === "NotFound" ||
+        code === "NoSuchKey"
+    );
+}
+
 export async function r2PutFile({ key, filePath, contentType }) {
     const client = r2Client();
     const Bucket = r2Bucket();
 
-    const Body = fs.createReadStream(filePath);
-
+    // ✅ crea stream dentro del try para evitar “stream ya usado”
     try {
+        const Body = fs.createReadStream(filePath);
+
         await client.send(
             new PutObjectCommand({
                 Bucket,
@@ -67,14 +113,7 @@ export async function r2PutFile({ key, filePath, contentType }) {
 
         return { ok: true, key };
     } catch (e) {
-        console.error("R2 PutObject failed", {
-            key,
-            name: e?.name,
-            message: e?.message,
-            code: e?.Code || e?.code,
-            httpStatusCode: e?.$metadata?.httpStatusCode,
-            requestId: e?.$metadata?.requestId,
-        });
+        logAwsErr("R2 PutObject failed", e, { key, Bucket });
         throw e;
     }
 }
@@ -87,18 +126,9 @@ export async function r2Exists(key) {
         await client.send(new HeadObjectCommand({ Bucket, Key: key }));
         return true;
     } catch (e) {
-        const status = e?.$metadata?.httpStatusCode;
-        if (status === 404) return false;
+        if (isNotFoundErr(e)) return false;
 
-        console.error("R2 PutObject failed", {
-            key,
-            name: e?.name,
-            message: e?.message,
-            code: e?.Code || e?.code,
-            httpStatusCode: e?.$metadata?.httpStatusCode,
-            requestId: e?.$metadata?.requestId,
-        });
-
+        logAwsErr("R2 HeadObject failed", e, { key, Bucket });
         throw e;
     }
 }
@@ -107,20 +137,30 @@ export async function r2DownloadToFile({ key, outPath }) {
     const client = r2Client();
     const Bucket = r2Bucket();
 
-    const resp = await client.send(new GetObjectCommand({ Bucket, Key: key }));
+    let resp;
+    try {
+        resp = await client.send(new GetObjectCommand({ Bucket, Key: key }));
+    } catch (e) {
+        logAwsErr("R2 GetObject failed", e, { key, Bucket });
+        throw e;
+    }
+
     if (!resp?.Body) throw new Error("R2 GetObject returned empty body");
 
     await pipeline(resp.Body, fs.createWriteStream(outPath));
     return { ok: true, outPath };
 }
 
-export async function r2SignedGetUrl(
-    key,
-    ttlSeconds = Number(R2_SIGNED_URL_TTL_SECONDS || 600)
-) {
+export async function r2SignedGetUrl(key, ttlSeconds = undefined) {
     const client = r2Client();
     const Bucket = r2Bucket();
 
+    // ✅ asegura número SIEMPRE (evita X-Amz-Expires inválido)
+    const ttl =
+        ttlSeconds === undefined
+            ? signedUrlTTLSeconds()
+            : clampInt(ttlSeconds, { min: 1, max: 604800, fallback: 600 });
+
     const cmd = new GetObjectCommand({ Bucket, Key: key });
-    return await getSignedUrl(client, cmd, { expiresIn: ttlSeconds });
+    return await getSignedUrl(client, cmd, { expiresIn: ttl });
 }
