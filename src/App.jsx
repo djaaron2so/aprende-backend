@@ -1,8 +1,15 @@
 ﻿import { useEffect, useMemo, useState } from "react";
 import { PayPalScriptProvider, PayPalButtons } from "@paypal/react-paypal-js";
 import { apiGetMe, apiCreateOrder, apiCaptureOrder, waitForPro } from "./api";
+import UsagePanel from "./components/UsagePanel";
 
 export default function App() {
+    return (
+        <div style={{ maxWidth: 900, margin: "0 auto", padding: 16 }}>
+            <UsagePanel />
+            {/* aquí abajo va tu lista de beats */}
+        </div>
+    );
     // ✅ Usuario de prueba FREE para que salga el botón
     const token = useMemo(() => "user-test-1", []);
 
