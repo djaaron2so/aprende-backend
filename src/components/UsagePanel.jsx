@@ -5,30 +5,45 @@ function num(v) {
     const n = Number(v);
     return Number.isFinite(n) ? n : null;
 }
-
 function fmt(v) {
     if (v === null || v === undefined) return "∞";
     const n = Number(v);
     return Number.isFinite(n) ? String(n) : "∞";
 }
-
 function clamp01(x) {
     return Math.max(0, Math.min(1, x));
 }
-
 function pctUsed(used, max) {
     const u = num(used);
     const m = num(max);
     if (u === null || m === null || m <= 0) return null;
     return clamp01(u / m);
 }
-
 function statusColor(p) {
-    // p: 0..1, más alto = peor (más consumido)
     if (p === null) return { bg: "#f5f5f5", fg: "#444", label: "∞" };
     if (p < 0.6) return { bg: "#eaffea", fg: "#0b6b2b", label: "OK" };
     if (p < 0.85) return { bg: "#fff6db", fg: "#7a5a00", label: "Cuidado" };
     return { bg: "#ffe3e3", fg: "#8a1212", label: "Casi lleno" };
+}
+
+function Pill({ text, bg, fg }) {
+    return (
+        <span
+            style={{
+                display: "inline-flex",
+                alignItems: "center",
+                padding: "6px 10px",
+                borderRadius: 999,
+                background: bg,
+                color: fg,
+                fontSize: 12,
+                fontWeight: 800,
+                whiteSpace: "nowrap",
+            }}
+        >
+            {text}
+        </span>
+    );
 }
 
 function Bar({ used, max }) {
@@ -66,9 +81,24 @@ function Bar({ used, max }) {
 
 function Card({ title, right, children }) {
     return (
-        <div style={{ padding: 14, border: "1px solid #eee", borderRadius: 14 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "baseline" }}>
-                <div style={{ fontWeight: 900, fontSize: 14 }}>{title}</div>
+        <div
+            style={{
+                padding: 14,
+                border: "1px solid #eee",
+                borderRadius: 16,
+                background: "#fff",
+            }}
+        >
+            <div
+                style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    alignItems: "baseline",
+                    flexWrap: "wrap",
+                }}
+            >
+                <div style={{ fontWeight: 1000, fontSize: 14 }}>{title}</div>
                 {right}
             </div>
             <div style={{ marginTop: 10 }}>{children}</div>
@@ -76,31 +106,21 @@ function Card({ title, right, children }) {
     );
 }
 
-function Pill({ text, bg, fg }) {
-    return (
-        <span
-            style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 8,
-                padding: "6px 10px",
-                borderRadius: 999,
-                background: bg,
-                color: fg,
-                fontSize: 12,
-                fontWeight: 800,
-                whiteSpace: "nowrap",
-            }}
-        >
-            {text}
-        </span>
-    );
-}
-
 export default function UsagePanel() {
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [err, setErr] = useState("");
+
+    const [isMobile, setIsMobile] = useState(() => {
+        if (typeof window === "undefined") return false;
+        return window.innerWidth < 720;
+    });
+
+    useEffect(() => {
+        const onResize = () => setIsMobile(window.innerWidth < 720);
+        window.addEventListener("resize", onResize);
+        return () => window.removeEventListener("resize", onResize);
+    }, []);
 
     async function load() {
         setLoading(true);
@@ -132,13 +152,15 @@ export default function UsagePanel() {
     );
     const mp3MonthP = useMemo(() => pctUsed(mp3.usedThisMonth, mp3.max), [mp3.usedThisMonth, mp3.max]);
 
-    const planPill = isPro
-        ? Pill({ text: `✅ PRO · ${plan}`, bg: "#eaffea", fg: "#0b6b2b" })
-        : Pill({ text: `🆓 FREE · ${plan}`, bg: "#fff2e8", fg: "#7a3300" });
+    const planPill = isPro ? (
+        <Pill text={`✅ PRO · ${plan}`} bg="#eaffea" fg="#0b6b2b" />
+    ) : (
+        <Pill text={`🆓 FREE · ${plan}`} bg="#fff2e8" fg="#7a3300" />
+    );
 
     if (loading) {
         return (
-            <div style={{ padding: 14, border: "1px solid #eee", borderRadius: 14 }}>
+            <div style={{ padding: 14, border: "1px solid #eee", borderRadius: 16, background: "#fff" }}>
                 Cargando usage...
             </div>
         );
@@ -146,28 +168,64 @@ export default function UsagePanel() {
 
     if (err) {
         return (
-            <div style={{ padding: 14, border: "1px solid #ffd1d1", borderRadius: 14 }}>
+            <div style={{ padding: 14, border: "1px solid #ffd1d1", borderRadius: 16, background: "#fff" }}>
                 <div style={{ fontWeight: 900, marginBottom: 8 }}>Error</div>
                 <div style={{ marginBottom: 10 }}>{err}</div>
-                <button onClick={load}>Reintentar</button>
+                <button onClick={load} style={{ padding: "10px 12px" }}>
+                    Reintentar
+                </button>
             </div>
         );
     }
 
     return (
-        <div style={{ padding: 14, border: "1px solid #eee", borderRadius: 14 }}>
-            {/* Header */}
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center" }}>
-                <div>
+        <div
+            style={{
+                padding: 14,
+                border: "1px solid #eee",
+                borderRadius: 16,
+                background: "#fff",
+            }}
+        >
+            {/* Header (móvil: apila) */}
+            <div
+                style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    gap: 12,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                }}
+            >
+                <div style={{ minWidth: isMobile ? "100%" : "auto" }}>
                     <div style={{ fontSize: 16, fontWeight: 1000 }}>Plan & Límites</div>
                     <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>
                         {data?.day} · {data?.month} · {data?.tz}
                     </div>
                 </div>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div
+                    style={{
+                        display: "flex",
+                        gap: 8,
+                        alignItems: "center",
+                        width: isMobile ? "100%" : "auto",
+                        justifyContent: isMobile ? "space-between" : "flex-end",
+                    }}
+                >
                     {planPill}
-                    <button onClick={load} style={{ padding: "8px 10px" }}>
+                    <button
+                        onClick={load}
+                        style={{
+                            padding: isMobile ? "10px 12px" : "8px 10px",
+                            borderRadius: 12,
+                            border: "1px solid #e6e6e6",
+                            background: "#fafafa",
+                            fontWeight: 800,
+                            cursor: "pointer",
+                        }}
+                        title="Actualizar"
+                    >
                         🔄
                     </button>
                 </div>
@@ -175,8 +233,14 @@ export default function UsagePanel() {
 
             <div style={{ height: 12 }} />
 
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                {/* Beats */}
+            {/* Grid responsive */}
+            <div
+                style={{
+                    display: "grid",
+                    gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
+                    gap: 12,
+                }}
+            >
                 <Card
                     title="🎛️ Beats"
                     right={
@@ -187,24 +251,26 @@ export default function UsagePanel() {
                         />
                     }
                 >
-                    <div style={{ display: "grid", gap: 12 }}>
+                    <div style={{ display: "grid", gap: 14 }}>
                         <div>
                             <div style={{ fontSize: 12, color: "#666" }}>Hoy</div>
-                            <div style={{ fontSize: 13, marginTop: 2 }}>
+                            <div style={{ fontSize: 13, marginTop: 4, lineHeight: 1.35 }}>
                                 Usados: <b>{fmt(beats.usedToday)}</b> / Max: <b>{fmt(beats.maxDaily)}</b> · Restan:{" "}
                                 <b>{fmt(beats.remainingToday)}</b>
                             </div>
                             <Bar used={beats.usedToday} max={beats.maxDaily} />
-                            <Pill
-                                text={statusColor(beatsTodayP).label}
-                                bg={statusColor(beatsTodayP).bg}
-                                fg={statusColor(beatsTodayP).fg}
-                            />
+                            <div style={{ marginTop: 8 }}>
+                                <Pill
+                                    text={statusColor(beatsTodayP).label}
+                                    bg={statusColor(beatsTodayP).bg}
+                                    fg={statusColor(beatsTodayP).fg}
+                                />
+                            </div>
                         </div>
 
                         <div>
                             <div style={{ fontSize: 12, color: "#666" }}>Mes</div>
-                            <div style={{ fontSize: 13, marginTop: 2 }}>
+                            <div style={{ fontSize: 13, marginTop: 4, lineHeight: 1.35 }}>
                                 Usados: <b>{fmt(beats.usedThisMonth)}</b> / Max: <b>{fmt(beats.maxMonthly)}</b> · Restan:{" "}
                                 <b>{fmt(beats.remainingThisMonth)}</b>
                             </div>
@@ -213,7 +279,6 @@ export default function UsagePanel() {
                     </div>
                 </Card>
 
-                {/* MP3 Exports */}
                 <Card
                     title="⬇️ MP3 Exports"
                     right={
@@ -229,20 +294,29 @@ export default function UsagePanel() {
                     }
                 >
                     {!isPro ? (
-                        <div style={{ fontSize: 13, color: "#666" }}>
+                        <div style={{ fontSize: 13, color: "#666", lineHeight: 1.35 }}>
                             Para exportar MP3 necesitas <b>PRO</b>.
                         </div>
                     ) : (
                         <>
                             <div style={{ fontSize: 12, color: "#666" }}>Mes</div>
-                            <div style={{ fontSize: 13, marginTop: 2 }}>
+                            <div style={{ fontSize: 13, marginTop: 4, lineHeight: 1.35 }}>
                                 Usados: <b>{fmt(mp3.usedThisMonth)}</b> / Max: <b>{fmt(mp3.max)}</b> · Restan:{" "}
                                 <b>{fmt(mp3.remainingThisMonth)}</b>
                             </div>
                             <Bar used={mp3.usedThisMonth} max={mp3.max} />
 
                             {Number(mp3.remainingThisMonth) === 0 ? (
-                                <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "#ffe3e3", color: "#8a1212" }}>
+                                <div
+                                    style={{
+                                        marginTop: 10,
+                                        padding: 10,
+                                        borderRadius: 12,
+                                        background: "#ffe3e3",
+                                        color: "#8a1212",
+                                        fontWeight: 800,
+                                    }}
+                                >
                                     Llegaste al límite mensual de MP3 exports.
                                 </div>
                             ) : null}
@@ -250,6 +324,13 @@ export default function UsagePanel() {
                     )}
                 </Card>
             </div>
+
+            {/* Nota compacta móvil */}
+            {isMobile ? (
+                <div style={{ marginTop: 12, fontSize: 12, color: "#666", lineHeight: 1.35 }}>
+                    Tip: toca 🔄 para actualizar tus límites después de generar o exportar.
+                </div>
+            ) : null}
         </div>
     );
 }
