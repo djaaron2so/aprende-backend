@@ -12,3 +12,9 @@ data.sqlite-shm
 *.sqlite-wal
 *.sqlite-shm
 *.sqlite-journal
+# local generated audio
+beat-*.wav
+beat-*.mp3
+r2-*.wav
+r2-*.mp3
+/public/beats/
